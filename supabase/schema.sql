@@ -535,7 +535,7 @@ create or replace function public.execute_transfer(
 returns public.transfers
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_from public.accounts%rowtype;
@@ -636,7 +636,7 @@ create or replace function public.execute_bill_payment(
 returns public.bill_payments
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_acc public.accounts%rowtype;
@@ -758,7 +758,7 @@ create or replace function public.create_gateway_payment(
 returns public.payment_gateway_transactions
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_tx public.payment_gateway_transactions%rowtype;

@@ -92,13 +92,45 @@ export async function executeTransfer(input: {
 }) {
   const { data, error } = await supabase.rpc('execute_transfer', {
     p_from_account_id: input.fromAccountId,
-    p_to_account_number: input.toAccountNumber,
+    p_to_account_number: input.toAccountNumber.trim(),
     p_amount: input.amount,
     p_description: input.description ?? null,
     p_kind: input.kind ?? 'internal',
   })
-  if (error) throw error
+  if (error) throw new Error(error.message)
   return data as Transfer
+}
+
+export type TransferDirectoryItem = {
+  account_number: string
+  account_type: string
+  owner_name: string
+  owner_email: string
+  is_own: boolean
+}
+
+export async function listTransferDirectory() {
+  const { data, error } = await supabase.rpc('list_transfer_directory')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as TransferDirectoryItem[]
+}
+
+export type DemoInvoice = {
+  id: string
+  provider_id: string
+  provider_name: string
+  category: string
+  bill_reference: string
+  amount: number
+  description: string | null
+  status: string
+  due_date: string
+}
+
+export async function listDemoInvoices() {
+  const { data, error } = await supabase.rpc('list_demo_invoices')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as DemoInvoice[]
 }
 
 export async function listTransfers(userId: string) {
@@ -163,10 +195,10 @@ export async function payBill(input: {
   const { data, error } = await supabase.rpc('execute_bill_payment', {
     p_account_id: input.accountId,
     p_provider_id: input.providerId,
-    p_bill_reference: input.billReference,
+    p_bill_reference: input.billReference.trim(),
     p_amount: input.amount,
   })
-  if (error) throw error
+  if (error) throw new Error(error.message)
   return data as BillPayment
 }
 

@@ -1,19 +1,24 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { BoldCheckoutButton } from '@/components/payments/BoldCheckoutButton'
 import type { BoldCheckoutData } from '@/lib/bold'
 import { formatCOP, formatDate, statusLabel } from '@/lib/format'
 import { getBoldPublicConfig, prepareBoldCheckout } from '@/services/bold'
-import { listAccounts, listBillPayments, listProviders, payBill } from '@/services/fincomer'
-import type { Account, BillPayment, ServiceProvider } from '@/types'
+import {
+  listAccounts,
+  listBillPayments,
+  listDemoInvoices,
+  payBill,
+  type DemoInvoice,
+} from '@/services/fincomer'
+import type { Account, BillPayment } from '@/types'
 import {
   Alert,
   Badge,
   Button,
   EmptyState,
   Field,
-  Input,
   LoadingBlock,
   PageHeader,
   Panel,
@@ -26,12 +31,10 @@ export function PaymentsPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [providers, setProviders] = useState<ServiceProvider[]>([])
+  const [invoices, setInvoices] = useState<DemoInvoice[]>([])
   const [payments, setPayments] = useState<BillPayment[]>([])
   const [accountId, setAccountId] = useState('')
-  const [providerId, setProviderId] = useState('')
-  const [reference, setReference] = useState('')
-  const [amount, setAmount] = useState('')
+  const [invoiceId, setInvoiceId] = useState('')
   const [method, setMethod] = useState<PayMethod>('account')
   const [checkout, setCheckout] = useState<BoldCheckoutData | null>(null)
   const [boldReady, setBoldReady] = useState(false)
@@ -40,20 +43,27 @@ export function PaymentsPage() {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  const selected = useMemo(
+    () => invoices.find((i) => i.id === invoiceId) ?? null,
+    [invoices, invoiceId],
+  )
+
   async function reload() {
     if (!user) return
-    const [a, p, b, cfg] = await Promise.all([
+    const [a, inv, b, cfg] = await Promise.all([
       listAccounts(user.id),
-      listProviders(),
+      listDemoInvoices(),
       listBillPayments(user.id),
       getBoldPublicConfig().catch(() => ({ configured: false, scriptUrl: '', apiKey: null })),
     ])
     setAccounts(a)
-    setProviders(p)
+    setInvoices(inv)
     setPayments(b)
     setBoldReady(Boolean(cfg.configured))
     if (!accountId && a[0]) setAccountId(a[0].id)
-    if (!providerId && p[0]) setProviderId(p[0].id)
+    if ((!invoiceId || !inv.some((i) => i.id === invoiceId)) && inv[0]) {
+      setInvoiceId(inv[0].id)
+    }
   }
 
   useEffect(() => {
@@ -63,6 +73,10 @@ export function PaymentsPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
+    if (!selected) {
+      setError('Selecciona una factura de la lista')
+      return
+    }
     setBusy(true)
     setError(null)
     setOk(null)
@@ -71,25 +85,26 @@ export function PaymentsPage() {
       if (method === 'account') {
         const pay = await payBill({
           accountId,
-          providerId,
-          billReference: reference,
-          amount: Number(amount),
+          providerId: selected.provider_id,
+          billReference: selected.bill_reference,
+          amount: Number(selected.amount),
         })
-        setOk(`Pago exitoso desde tu cuenta. Comprobante: ${pay.receipt_code}`)
-        setReference('')
-        setAmount('')
+        setOk(`Pago exitoso. Comprobante: ${pay.receipt_code}`)
         await reload()
       } else {
         const result = await prepareBoldCheckout({
           accountId,
-          amount: Number(amount),
-          description: `Pago servicio ref ${reference}`,
+          amount: Number(selected.amount),
+          description: `Pago ${selected.provider_name} ${selected.bill_reference}`,
           purpose: 'bill',
-          purposeMeta: { provider_id: providerId, bill_reference: reference },
+          purposeMeta: {
+            provider_id: selected.provider_id,
+            bill_reference: selected.bill_reference,
+          },
           redirectionUrl: `${window.location.origin}/pse/resultado`,
         })
         setCheckout(result.boldCheckoutData)
-        setOk(`Orden Bold ${result.boldCheckoutData.orderId} lista. Completa el pago abajo.`)
+        setOk(`Orden Bold lista. Completa el pago abajo.`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo pagar')
@@ -105,11 +120,11 @@ export function PaymentsPage() {
       <PageHeader
         eyebrow="RF-21 · RF-22 · RF-24 · Bold"
         title="Pago de servicios"
-        description="Paga servicios y obligaciones con saldo Fincomer o con Bold (tarjeta/PSE)."
+        description="Elige una factura demo de la lista y págalo con tu cuenta o Bold."
       />
 
       <div className="grid-2">
-        <Panel title="Nuevo pago">
+        <Panel title="Pagar factura">
           <form className="form-stack" onSubmit={(e) => void onSubmit(e)}>
             <Field label="Medio de pago">
               <Select
@@ -134,30 +149,52 @@ export function PaymentsPage() {
                 ))}
               </Select>
             </Field>
-            <Field label="Proveedor">
-              <Select value={providerId} onChange={(e) => setProviderId(e.target.value)} required>
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.category})
-                  </option>
-                ))}
+            <Field label="Factura pendiente" hint="Referencias demo listas para seleccionar">
+              <Select
+                value={invoiceId}
+                onChange={(e) => setInvoiceId(e.target.value)}
+                required
+              >
+                {invoices.length === 0 ? (
+                  <option value="">No hay facturas pendientes</option>
+                ) : (
+                  invoices.map((inv) => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.provider_name} · {inv.bill_reference} · {formatCOP(inv.amount)}
+                    </option>
+                  ))
+                )}
               </Select>
             </Field>
-            <Field label="Referencia / número de factura">
-              <Input required value={reference} onChange={(e) => setReference(e.target.value)} />
-            </Field>
-            <Field label="Valor">
-              <Input
-                type="number"
-                min="1"
-                required
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </Field>
+
+            {selected ? (
+              <dl className="meta-list">
+                <div>
+                  <dt>Proveedor</dt>
+                  <dd>{selected.provider_name}</dd>
+                </div>
+                <div>
+                  <dt>Referencia</dt>
+                  <dd className="mono">{selected.bill_reference}</dd>
+                </div>
+                <div>
+                  <dt>Valor</dt>
+                  <dd>{formatCOP(selected.amount)}</dd>
+                </div>
+                <div>
+                  <dt>Vence</dt>
+                  <dd>{selected.due_date}</dd>
+                </div>
+                <div>
+                  <dt>Detalle</dt>
+                  <dd>{selected.description}</dd>
+                </div>
+              </dl>
+            ) : null}
+
             {error ? <Alert tone="danger">{error}</Alert> : null}
             {ok ? <Alert tone="ok">{ok}</Alert> : null}
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy || !selected}>
               {busy
                 ? 'Procesando…'
                 : method === 'bold'
